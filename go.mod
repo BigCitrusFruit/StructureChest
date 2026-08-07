@@ -2,7 +2,10 @@ module github.com/BigCitrusFruit/StructureChest
 
 go 1.24.4
 
-require fyne.io/fyne/v2 v2.8.0
+require (
+	fyne.io/fyne/v2 v2.8.0
+	github.com/df-mc/goleveldb v1.1.9
+)
 
 require (
 	fyne.io/systray v1.12.2 // indirect
@@ -21,10 +24,12 @@ require (
 	github.com/go-text/render v0.2.1 // indirect
 	github.com/go-text/typesetting v0.3.4 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
+	github.com/golang/snappy v0.0.1 // indirect
 	github.com/hack-pad/go-indexeddb v0.3.2 // indirect
 	github.com/hack-pad/safejs v0.1.0 // indirect
 	github.com/jeandeaual/go-locale v0.0.0-20250612000132-0ef82f21eade // indirect
 	github.com/jsummers/gobmp v0.0.0-20230614200233-a9de23ed2e25 // indirect
+	github.com/klauspost/compress v1.13.6 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect

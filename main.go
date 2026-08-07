@@ -3,14 +3,20 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
-	"sort"
+
+	//"image"
+	//"archive/zip"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
+	world "github.com/BigCitrusFruit/StructureChest/world"
 )
 
 type AppUI struct {
@@ -21,6 +27,8 @@ type AppUI struct {
 		StructureTree *widget.Tree
 		WorldSearch *widget.Entry
 		SortSelect *widget.Select
+		WorldList *widget.List
+		WorldSort *widget.Select
 	}
 }
 
@@ -32,6 +40,14 @@ type treeControl struct {
 	SearchQuery string
 	SortMethod sortMethod
 	NodeMap map[string]*structNode
+	Increment atomic.Uint64
+}
+
+type worldsControl struct {
+	SelectedFolder string
+	Worlds []*worldCard
+	SearchQuery string
+	SortMethod sortMethod
 }
 
 type structNode struct {
@@ -40,6 +56,28 @@ type structNode struct {
 	IsDir bool
 	ModTime time.Time
 	Children []*structNode
+	Uid string
+}
+
+type worldCard struct {
+	PathToFolder string
+	WorldName string
+	LastPlayed string
+	Structures []world.StructureName
+	Packs []string
+	Card *CardItem
+}
+
+type CardItem struct {
+	widget.BaseWidget
+	Image *canvas.Image
+	Name *widget.Label
+	Date *widget.Label
+	StructuresLabel *widget.Label
+	StructuresList *widget.Label
+	PacksLabel *widget.Label
+	PacksList *widget.Label
+	Root *fyne.Container
 }
 
 const (
@@ -51,145 +89,30 @@ const (
 var (
 	UI AppUI
 	StructTree treeControl
+	WorldList worldsControl
 )
 
 func main() {
-	StructTree.Directory = "./structures"
+	StructTree.Directory = "./files/structures"
+	WorldList.SelectedFolder = "~/.var/app/io.mrarm.mcpelauncher/data/mcpelauncher/games/com.mojang"
 	MainApp := app.NewWithID("com.bigcitrusfruit.structurechest")
 	MainWindow := MainApp.NewWindow("StructureChestMC")
 
 	PlaceholderLabel := widget.NewLabel("")
-	buildUI()
+	BuildUI()
 
 	headerTabs := container.NewAppTabs(
 		container.NewTabItem("1 - Structures", UI.StructureTab.Split),
 		container.NewTabItem("2 - Worlds", PlaceholderLabel),
 		container.NewTabItem("3 - Packs", PlaceholderLabel),
 	)
+	WorldList.Worlds = buildWorldsList()
+	UI.StructureTab.WorldList.Refresh()
 	StructTree.RootNodes = buildTree(StructTree.Directory)
 	StructTree.RefreshTree()
 
 	MainWindow.SetContent(headerTabs)
 	MainWindow.ShowAndRun()
-}
-
-func buildUI()  {
-	UI.StructureTab.StructureSearch = widget.NewEntry()
-	UI.StructureTab.StructureSearch.SetPlaceHolder("Search structures...")
-	UI.StructureTab.StructureSearch.OnChanged = func(search string) {
-		StructTree.SearchQuery = search
-		StructTree.RefreshTree()
-	}
-	UI.StructureTab.StructureSearch.ActionItem = widget.NewButton("X", func() {
-		UI.StructureTab.StructureSearch.SetText("")
-		StructTree.RefreshTree()
-	})
-	UI.StructureTab.StructureTree = widget.NewTree(
-		func(id widget.TreeNodeID) []widget.TreeNodeID { // get child id
-			var (
-				children []widget.TreeNodeID
-				folders []*structNode
-				files []*structNode
-			)
-			if id == "" {
-				if StructTree.SearchQuery == "" {
-					for _, node := range StructTree.RootNodes {
-						if node.IsDir {
-							folders = append(folders, node)
-						} else {
-							files = append(files, node)
-						}
-					}
-				} else {
-					folders = []*structNode{}
-					files = filterNodeList(StructTree.RootNodes)
-				}
-			} else {
-				for _, child := range StructTree.NodeMap[id].Children {
-					if child.IsDir {
-						folders = append(folders, child)
-					} else {
-						files = append(files, child)
-					}
-				}
-			}
-			sort.Slice(folders, func(i int, j int) bool {
-					return folders[i].Name < folders[j].Name
-			})
-			sort.Slice(files, func(i int, j int) bool {
-				switch StructTree.SortMethod {
-				case Alphabetical:
-					return files[i].Name < files[j].Name
-				case DateA:
-					return files[i].ModTime.After(files[j].ModTime)
-				case DateD:
-					fallthrough
-				default:
-					return files[i].ModTime.Before(files[j].ModTime)
-				}
-			})
-			for _, folder := range folders {
-				children = append(children, folder.Path)
-			}
-			for _, file := range files {
-				children = append(children, file.Path)
-			}
-			return children
-		},
-		func(id widget.TreeNodeID) bool { // IsBranch
-			if id == "" {
-				return true
-			}
-			return StructTree.NodeMap[id].IsDir
-		},
-		func(isBranch bool) fyne.CanvasObject { // templates
-			if isBranch {
-				return widget.NewLabel("Branch template")
-			}
-			return widget.NewLabel("Leaf template")
-		},
-		func(id widget.TreeNodeID, isBranch bool, object fyne.CanvasObject) { // update
-			node := StructTree.NodeMap[id]
-			text := node.Name
-			if isBranch {
-				text = "🗀  " + text
-			}
-			object.(*widget.Label).SetText(text)
-			object.(*widget.Label).Refresh()
-		})
-	UI.StructureTab.SortSelect = widget.NewSelect([]string{"Newest First", "Oldest First", "Alphabetical"}, func(option string) {
-		switch option {
-		case "Newest First":
-			StructTree.SortMethod = DateD
-		case "Oldest First":
-			StructTree.SortMethod = DateA
-		case "Alphabetical":
-			StructTree.SortMethod = Alphabetical
-		default:
-			StructTree.SortMethod = DateA
-		}
-		StructTree.RefreshTree()
-	})
-	UI.StructureTab.Split = container.NewHSplit(
-		container.NewBorder(
-			container.NewVBox(
-				container.NewHBox(
-					widget.NewLabel("Sort by: "),
-					UI.StructureTab.SortSelect,
-					widget.NewButton("Export as...", func() {}),
-				),
-				UI.StructureTab.StructureSearch,
-			),
-			nil, nil, nil,
-			container.NewScroll(
-				UI.StructureTab.StructureTree,
-			),
-		),
-		container.NewBorder(
-			nil, nil, nil, nil, nil,
-		),
-	)
-	UI.StructureTab.Split.Offset = 0.3
 }
 
 func (tree *treeControl) RefreshTree() {
@@ -201,7 +124,12 @@ func (tree *treeControl) RefreshTree() {
 }
 
 func addToMap(node *structNode) {
-	StructTree.NodeMap[node.Path] = node
+	if node.IsDir {
+		node.Uid = node.Path
+	} else {
+		node.Uid = node.Path + "#" + strconv.Itoa(int(StructTree.Increment.Add(1)))
+	}
+	StructTree.NodeMap[node.Uid] = node
 	if node.IsDir {
 		for _, child := range node.Children {
 			addToMap(child)
@@ -250,4 +178,52 @@ func filterNodeList(nodes []*structNode) []*structNode {
 		}
 	}
 	return filteredNodes
+}
+
+func buildWorldsList() []*worldCard {
+	path := resolvePath(filepath.Join(WorldList.SelectedFolder, "/minecraftWorlds"))
+	entries, err := os.ReadDir(path) 
+	if err != nil { 
+		return []*worldCard{} 
+	}
+	var worlds []*worldCard
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		worldPath := filepath.Join(path, entry.Name())
+		worldName, err := os.ReadFile(filepath.Join(worldPath, "/levelname.txt"))
+		if err != nil {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		structures := world.ListWorldStructures(worldPath)
+		world := &worldCard{
+			PathToFolder: worldPath,
+			WorldName: string(worldName),
+			LastPlayed: info.ModTime().Format(time.DateTime),
+			Card: NewWorldCard(),
+			Structures: structures,
+		}
+		worlds = append(worlds, world)
+	}
+	return worlds
+}
+
+func filterWorlds(worlds []*worldCard, query string) []*worldCard {
+	return worlds
+}
+
+func resolvePath(path string) string {
+	if strings.HasPrefix(path, "~") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		path = filepath.Join(home, path[1:])
+	}
+	return os.ExpandEnv(path)
 }

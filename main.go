@@ -31,6 +31,7 @@ type AppUI struct {
 		SortSelect *widget.Select
 		WorldList *widget.List
 		WorldSort *widget.Select
+		ComMojangEntry *widget.Entry
 		WorldListContainer fyne.CanvasObject
 	}
 }

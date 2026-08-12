@@ -114,6 +114,19 @@ func BuildUI()  {
 		}
 		StructTree.RefreshTree()
 	})
+	UI.StructureTab.ComMojangEntry = widget.NewEntry()
+	UI.StructureTab.ComMojangEntry.SetPlaceHolder("com.mojang directory, use \"~\" for user home directory") // I will put this in a settings page later, but havent built the settings page so yeah
+	UI.StructureTab.ComMojangEntry.SetText("~/.var/app/io.mrarm.mcpelauncher/data/mcpelauncher/games/com.mojang")
+	UI.StructureTab.ComMojangEntry.OnSubmitted = func(entry string) {
+		WorldList.SelectedFolder = resolvePath(entry)
+		WorldList.Worlds = buildWorldsList()
+		WorldList.UpdateWorlds()
+		UI.StructureTab.WorldList.Refresh()
+	}
+	UI.StructureTab.ComMojangEntry.ActionItem = widget.NewButton("X", func() {
+		UI.StructureTab.ComMojangEntry.SetText("")
+		UI.StructureTab.ComMojangEntry.OnSubmitted("")
+	})
 	UI.StructureTab.WorldSearch = widget.NewEntry()
 	UI.StructureTab.WorldSearch.SetPlaceHolder("Search worlds...")
 	UI.StructureTab.WorldSearch.ActionItem = widget.NewButton("X", func() {
@@ -157,7 +170,12 @@ func BuildUI()  {
 	UI.StructureTab.WorldListContainer = container.NewBorder(
 		container.NewVBox(
 			container.NewBorder(
-				widget.NewLabel("placeholder"),
+				container.NewBorder(
+					nil, nil,
+					widget.NewLabel("com.mojang directory: "),
+					nil,
+					UI.StructureTab.ComMojangEntry,
+				),
 				nil,
 				container.NewHBox(
 					widget.NewButton("Import world...", func() {}),

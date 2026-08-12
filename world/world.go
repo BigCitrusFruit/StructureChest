@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"encoding/json"
 	"strings"
 
 	leveldb "github.com/df-mc/goleveldb/leveldb"
@@ -20,24 +21,37 @@ type StructureName struct {
 
 type BehaviorPack struct {
 	Name string
-	Version string
-	UUID string
 	Description string
-	EmbeddedStructures []RawStructure
+	ID PackID
+	Path string
+	EmbeddedStructureNames []string
 }
 
 type ResourcePack struct {
 	Name string
-	Version string
-	UUID string
 	Description string
+	ID PackID
+	Path string
+}
+
+type PackID struct {
+	UUID string `json:"pack_id"`
+	Version [3]int `json:"version"`
+}
+
+type manifestHeader struct {
+	Header struct {
+		Name string `json:"name"`
+		UUID string `json:"uuid"`
+		Version [3]int `json:"version"`
+		Description string `json:"description"`
+	} `json:"header"`
 }
 
 type Addon struct {
 	BP BehaviorPack
 	RP ResourcePack
 }
-
 
 func resolvePath(path string) string {
 	if strings.HasPrefix(path, "~") {
@@ -50,6 +64,8 @@ func resolvePath(path string) string {
 	return os.ExpandEnv(path)
 }
 
+// Lists the structures inside a world's database.
+// Returns only the name and ID of each structure.
 func ListWorldStructures(path string) []StructureName  {
 	path = filepath.Join(resolvePath(path), "/db")
 	if path == "/db" {
@@ -91,6 +107,8 @@ func ListWorldStructures(path string) []StructureName  {
 	return structNames
 }
 
+// Gets a structure from a world's level database by its name.
+// Requires a name and prefix, although most useful structures will have the prefix "mystructure"
 func GetStructureFromWorld(path string, name StructureName) (RawStructure, error) {
 	path = filepath.Join(resolvePath(path)) + "/db"
 	if path == "/db" {
@@ -100,13 +118,157 @@ func GetStructureFromWorld(path string, name StructureName) (RawStructure, error
 	if err != nil {
 		return RawStructure{}, err
 	}
-	key := []byte("structuretemplate_" + name.Prefix + name.Name)
+	key := []byte("structuretemplate_" + name.Prefix + ":" + name.Name)
 	value, err := database.Get(key, nil)
 	return RawStructure(value), nil
 }
 
+// Gets a structure file from a pack specified by a path.
+func GetStructureFromPack(path string, name string) (RawStructure, error) {
+	var (
+		structure RawStructure
+		err error
+	)
+	structure, err = os.ReadFile(filepath.Join(path, "/structures", "/" + name + ".mcstructure"))
+	if err != nil {
+		return RawStructure{}, err
+	}
+	return structure, nil
+}
 
-func ListWorldPacks(path string) []string {
+// Lists the UUIDs and versions defined in the world_resource_packs.json and world_behavior_packs.json files for a world.
+// The existence of an entry for a pack here does not garuantee that the pack exists in the world.
+func ListWorldPacks(path string) (RP []PackID, BP []PackID) {
 	path = resolvePath(path)
+	RPfile, err := os.ReadFile(filepath.Join(path, "/world_resource_packs.json"))
+	if err != nil {
+		return []PackID{}, []PackID{}
+	}
+	BPfile, err := os.ReadFile(filepath.Join(path, "/world_behavior_packs.json"))
+	if err != nil {
+		return []PackID{}, []PackID{}
+	}
+	err = json.Unmarshal(RPfile, &RP)
+	if err != nil {
+		RP = []PackID{}
+	}
+	err = json.Unmarshal(BPfile, &BP)
+	if err != nil {
+		BP = []PackID{}
+	}	
+	return
+}
+
+//  Accepts the ID of a pack and attempts to grab it from the world. If it doesnt exist, returns an empty struct.
+func GetBPFromWorld(worldPath string, ID PackID) (BehaviorPack, error) {
+	BPpath := filepath.Join(worldPath, "/behavior_packs")
+	BPfolders, err := os.ReadDir(BPpath)
+	if err != nil {
+		return BehaviorPack{}, err
+	}
+	var pack BehaviorPack
+	for _, BPfolder := range BPfolders {
+		if !BPfolder.IsDir() {
+			continue
+		}
+		manifest, err := os.ReadFile(filepath.Join(BPpath, BPfolder.Name(), "/manifest.json"))
+		if err != nil {
+			continue
+		}
+		var header manifestHeader
+		err = json.Unmarshal(manifest, &header)
+		if err != nil {
+			continue
+		}
+		if header.Header.UUID == ID.UUID && header.Header.Version == ID.Version {
+			pack = BehaviorPack{
+				ID: ID,
+				Name: header.Header.Name,
+				Description: header.Header.Description,
+				Path: filepath.Join(BPpath, BPfolder.Name()),
+			}
+			break
+		}
+	}
+	if pack.Name == "" {
+		return BehaviorPack{}, nil
+	}
+	embeddedStructures, err := os.ReadDir(filepath.Join(pack.Path, "/structures"))
+	if err == nil {
+		for _, structure := range embeddedStructures {
+			if filepath.Ext(structure.Name()) != ".mcstructure" {
+				continue
+			}
+			pack.EmbeddedStructureNames = append(pack.EmbeddedStructureNames, strings.TrimSuffix(structure.Name(), ".mcstructure"))
+		}
+	}
+	return pack, nil
+}
+
+// Accepts the ID of a pack and attempts to grab it from the world. If it doesnt exist, returns an empty struct.
+func GetRPFromWorld(worldPath string, ID PackID) (ResourcePack, error) {
+	RPpath := filepath.Join(worldPath, "/resource_packs")
+	RPfolders, err := os.ReadDir(RPpath)
+	if err != nil {
+		return ResourcePack{}, err
+	}
+	var pack ResourcePack
+	for _, RPfolder := range RPfolders {
+		if !RPfolder.IsDir() {
+			continue
+		}
+		manifest, err := os.ReadFile(filepath.Join(RPpath, RPfolder.Name(), "/manifest.json"))
+		if err != nil {
+			continue
+		}
+		var header manifestHeader
+		err = json.Unmarshal(manifest, &header)
+		if err != nil {
+			continue
+		}
+		if header.Header.UUID == ID.UUID && header.Header.Version == ID.Version {
+			pack = ResourcePack{
+				ID: ID,
+				Name: header.Header.Name,
+				Description: header.Header.Description,
+				Path: filepath.Join(RPpath, RPfolder.Name()),
+			}
+			break
+		}
+	}
+	return pack, nil
+}
+
+
+func AddRPToWorld(packPath string, worldPath string) error { // TODO
 	return nil
+}
+
+
+func AddBPToWorld(packPath string, worldPath string) error { // TODO
+	return nil
+}
+
+
+func RemovePackFromWorld(id PackID, worldPath string, isBP bool) error { // TODO
+	return nil
+}
+
+// Adds a structure to the world database. The key defaults to
+// `"structuretemplate_mystructure:" + name`
+// as if it were saved or imported by the player in-game
+func (structure *RawStructure) AddToWorld(path string, name string) error {
+	db, err := leveldb.OpenFile(filepath.Join(path, "/db"), &dbopt.Options{ReadOnly: false})
+	if err != nil {
+		return err
+	}
+	key := "structuretemplate_mystructure:" + name
+	err = db.Put([]byte(key), *structure, nil)
+	return err
+}
+
+// "path" is the path to the PACK inside the world, not just the world. The path may be gotten from world.GetBPFromWorld(worldPath)
+func (structure *RawStructure) AddToWorldPack(path string, name string) error {
+	structurePath := filepath.Join(path, "/"+ name + ".mcstructure")
+	return os.WriteFile(structurePath, *structure, 0666)
 }

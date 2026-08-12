@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 
@@ -62,7 +63,7 @@ func BuildUI()  {
 				case Alphabetical:
 					return files[i].Name < files[j].Name
 				case DateA:
-									return files[i].ModTime.After(files[j].ModTime)
+					return files[i].ModTime.After(files[j].ModTime)
 				case DateD:
 					fallthrough
 				default:
@@ -87,15 +88,18 @@ func BuildUI()  {
 			if isBranch {
 				return widget.NewLabel("Branch template")
 			}
-			return widget.NewLabel("Leaf template")
+			return NewTreeItemLabel("Leaf template")
 		},
 		func(id widget.TreeNodeID, isBranch bool, object fyne.CanvasObject) { // update
 			node := StructTree.NodeMap[id]
 			text := node.Name
 			if isBranch {
 				text = "🗀  " + text
+				object.(*widget.Label).SetText(text)
+			} else {
+				object.(*TreeItemLabel).SetText(text)
+				object.(*TreeItemLabel).NodeID = id
 			}
-			object.(*widget.Label).SetText(text)
 		})
 	UI.StructureTab.SortSelect = widget.NewSelect([]string{"Newest First", "Oldest First", "Alphabetical"}, func(option string) {
 		switch option {
@@ -115,20 +119,57 @@ func BuildUI()  {
 	UI.StructureTab.WorldSearch.ActionItem = widget.NewButton("X", func() {
 		UI.StructureTab.WorldSearch.SetText("")
 	})
-	UI.StructureTab.WorldSort = widget.NewSelect([]string{"Newest First", "Oldest First", "Alphabetical"}, func(option string) {})
+	UI.StructureTab.WorldSearch.OnChanged = func(search string) {
+		WorldList.SearchQuery = search
+		WorldList.UpdateWorlds()
+		UI.StructureTab.WorldList.Refresh()
+	}
+	UI.StructureTab.WorldSort = widget.NewSelect([]string{"Most Recent", "Least Recent", "Alphabetical"}, func(option string) {
+		switch option {
+		case "Most Recent":
+			WorldList.SortMethod = DateA
+		case "Least Recent":
+			WorldList.SortMethod = DateD
+		case "Alphabetical":
+			WorldList.SortMethod = Alphabetical
+		default:
+			WorldList.SortMethod = DateA
+		}
+		WorldList.UpdateWorlds()
+		UI.StructureTab.WorldList.Refresh()
+	})
+	UI.StructureTab.WorldSort.Selected = "Most Recent"
+	UI.StructureTab.SortSelect.Selected = "Newest First"
 	UI.StructureTab.WorldList = widget.NewList(
 		func() int { // length
-			return len(WorldList.Worlds)
+			return len(WorldList.FilteredWorlds)
 		},
 		func() fyne.CanvasObject { // template
-			return NewWorldCard()
+			return NewWorldCard(&worldCard{})
 		},
 		func(id widget.ListItemID, object fyne.CanvasObject) { // update
-			world := WorldList.Worlds[id]
+			world := WorldList.FilteredWorlds[id]
 			item := object.(*CardItem)
 			world.Card = item
 			world.setContent()
 		},
+	)
+	UI.StructureTab.WorldListContainer = container.NewBorder(
+		container.NewVBox(
+			container.NewBorder(
+				widget.NewLabel("placeholder"),
+				nil,
+				container.NewHBox(
+					widget.NewButton("Import world...", func() {}),
+					widget.NewLabel("Sort by: "),
+					UI.StructureTab.WorldSort,
+				),
+				nil,
+				UI.StructureTab.WorldSearch,
+			),
+		),
+		nil, nil, nil, 
+		container.NewScroll(UI.StructureTab.WorldList),
 	)
 	UI.StructureTab.Split = container.NewHSplit(
 		container.NewBorder(
@@ -145,28 +186,12 @@ func BuildUI()  {
 				UI.StructureTab.StructureTree,
 			),
 		),
-		container.NewBorder(
-			container.NewVBox(
-				container.NewBorder(
-					widget.NewLabel("placeholder"),
-					nil,
-					container.NewHBox(
-						widget.NewButton("Import world...", func() {}),
-						widget.NewLabel("Sort by: "),
-						UI.StructureTab.WorldSort,
-					),
-					nil,
-					UI.StructureTab.WorldSearch,
-				),
-			),
-			nil, nil, nil, 
-			container.NewScroll(UI.StructureTab.WorldList),
-		),
+		UI.StructureTab.WorldListContainer,
 	)
 	UI.StructureTab.Split.Offset = 0.3
 }
 
-func NewWorldCard() *CardItem {
+func NewWorldCard(world *worldCard) *CardItem {
 	card := &CardItem{
 		Image: canvas.NewImageFromResource(theme.FolderIcon()),
 		Name: widget.NewLabelWithStyle("Template", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
@@ -175,11 +200,11 @@ func NewWorldCard() *CardItem {
 		PacksList: widget.NewLabel(""),
 		StructuresLabel: widget.NewLabel(""),
 		StructuresList: widget.NewLabel(""),
+		WorldPointer: world,
 	}
 	card.Image.FillMode = canvas.ImageFillContain
 	card.Image.CornerRadius = 6
 	card.Image.SetMinSize(fyne.NewSize(64, 64))
-
 	details := container.NewVBox(
 		container.NewHBox(card.Name, widget.NewSeparator(), card.Date),
 		container.NewBorder(
@@ -211,10 +236,38 @@ func (card *CardItem) CreateRenderer() fyne.WidgetRenderer {
 	return widget.NewSimpleRenderer(card.Root)
 }
 
+func (card *CardItem) DoubleTapped(event *fyne.PointEvent) {
+	card.WorldPointer.OpenDetailedView()
+}
+
+func (card *CardItem) Tapped(event *fyne.PointEvent) {
+
+}
+
+func (world *worldCard) OpenDetailedView() {
+	view := container.NewBorder(
+		container.NewVBox(
+			container.NewHBox(
+				widget.NewButtonWithIcon("", theme.NavigateBackIcon(), func() {
+					UI.StructureTab.Split.Trailing = UI.StructureTab.WorldListContainer
+					UI.StructureTab.Split.Refresh()
+				}),
+			),
+		),
+		nil, nil, nil,
+		widget.NewLabel("woof"),
+	)
+	UI.StructureTab.Split.Trailing = view
+	UI.StructureTab.Split.Refresh()
+}
+
 func (card *worldCard) setContent() {
 	card.Card.Name.SetText(card.WorldName)
-	card.Card.Date.SetText(card.LastPlayed)
-	var structList []string
+	card.Card.Date.SetText(card.LastPlayed.Format(time.DateTime))
+	var (
+		structList []string
+		packList []string
+	)
 	if len(card.Structures) > 5 {
 		for i := range 5 {
 			structList = append(structList, card.Structures[i].Name)
@@ -225,8 +278,65 @@ func (card *worldCard) setContent() {
 			structList = append(structList, structure.Name)
 		}
 	}
+	if len(card.Packs) > 3 {
+		for i := range 3 {
+			var parentheses string
+			if len(card.Packs[i].EmbeddedStructureNames) > 0 {
+				parentheses = fmt.Sprintf(" (%d structure", len(card.Packs[i].EmbeddedStructureNames))
+				if len(card.Packs[i].EmbeddedStructureNames) > 1 {
+					parentheses += "s)"
+				} else {
+					parentheses += ")"
+				}
+			} else {
+				parentheses = ""
+			}
+			packList = append(structList, card.Packs[i].Name + parentheses)
+		}
+		structList = append(structList, fmt.Sprintf("and %d more", len(card.Packs) - 3))
+	} else {
+		for _, pack := range card.Packs {
+			var parentheses string
+			if len(pack.EmbeddedStructureNames) > 0 {
+				parentheses = fmt.Sprintf(" (%d structure", len(pack.EmbeddedStructureNames))
+				if len(pack.EmbeddedStructureNames) > 1 {
+					parentheses += "s)"
+				} else {
+					parentheses += ")"
+				}
+			} else {
+				parentheses = ""
+			}
+			packList = append(packList, pack.Name + parentheses)
+		}
+	}
 	card.Card.StructuresLabel.SetText(fmt.Sprintf("Structures (%d): ", len(card.Structures)))
 	card.Card.StructuresList.SetText(strings.Join(structList, ", "))
-	card.Card.PacksLabel.SetText(fmt.Sprintf("Packs (%d)", len(card.Packs)))
+	card.Card.PacksLabel.SetText(fmt.Sprintf("Packs (%d): ", len(card.Packs)))
+	card.Card.PacksList.SetText(strings.Join(packList, ", "))
 }
 
+func NewTreeItemLabel(text string) *TreeItemLabel {
+	label := &TreeItemLabel{}
+	label.SetText(text)
+	label.SplitOffset = 0
+	label.ExtendBaseWidget(label)
+	return label
+}
+
+func (item *TreeItemLabel) Dragged(event *fyne.DragEvent) {
+	if item.SplitOffset == 0 {
+		item.SplitOffset = UI.StructureTab.Split.Offset
+	}
+	if UI.StructureTab.Split != nil {
+		UI.StructureTab.Split.Offset = item.SplitOffset
+	}
+}
+
+func (item *TreeItemLabel) DragEnd() {
+	item.SplitOffset = 0
+	if item.NodeID == "" {
+		return
+	}
+	// TODO make structures actually move into the world lol
+}

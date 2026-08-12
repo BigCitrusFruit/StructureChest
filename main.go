@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -16,6 +17,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
+
 	world "github.com/BigCitrusFruit/StructureChest/world"
 )
 
@@ -29,6 +31,7 @@ type AppUI struct {
 		SortSelect *widget.Select
 		WorldList *widget.List
 		WorldSort *widget.Select
+		WorldListContainer fyne.CanvasObject
 	}
 }
 
@@ -46,6 +49,7 @@ type treeControl struct {
 type worldsControl struct {
 	SelectedFolder string
 	Worlds []*worldCard
+	FilteredWorlds []*worldCard
 	SearchQuery string
 	SortMethod sortMethod
 }
@@ -62,9 +66,9 @@ type structNode struct {
 type worldCard struct {
 	PathToFolder string
 	WorldName string
-	LastPlayed string
+	LastPlayed time.Time
 	Structures []world.StructureName
-	Packs []string
+	Packs []world.BehaviorPack
 	Card *CardItem
 }
 
@@ -78,6 +82,13 @@ type CardItem struct {
 	PacksLabel *widget.Label
 	PacksList *widget.Label
 	Root *fyne.Container
+	WorldPointer *worldCard
+}
+
+type TreeItemLabel struct {
+	widget.Label
+	NodeID widget.TreeNodeID
+	SplitOffset float64
 }
 
 const (
@@ -97,10 +108,8 @@ func main() {
 	WorldList.SelectedFolder = "~/.var/app/io.mrarm.mcpelauncher/data/mcpelauncher/games/com.mojang"
 	MainApp := app.NewWithID("com.bigcitrusfruit.structurechest")
 	MainWindow := MainApp.NewWindow("StructureChestMC")
-
 	PlaceholderLabel := widget.NewLabel("")
 	BuildUI()
-
 	headerTabs := container.NewAppTabs(
 		container.NewTabItem("1 - Structures", UI.StructureTab.Split),
 		container.NewTabItem("2 - Worlds", PlaceholderLabel),
@@ -110,7 +119,8 @@ func main() {
 	UI.StructureTab.WorldList.Refresh()
 	StructTree.RootNodes = buildTree(StructTree.Directory)
 	StructTree.RefreshTree()
-
+	WorldList.UpdateWorlds()
+	UI.StructureTab.WorldList.Refresh()
 	MainWindow.SetContent(headerTabs)
 	MainWindow.ShowAndRun()
 }
@@ -201,20 +211,47 @@ func buildWorldsList() []*worldCard {
 			continue
 		}
 		structures := world.ListWorldStructures(worldPath)
+		_, packIDs := world.ListWorldPacks(worldPath)
+		var packs []world.BehaviorPack	
+		for _, packID := range packIDs {
+			pack, err := world.GetBPFromWorld(worldPath, packID)
+			if err != nil || pack.Name == "" {
+				continue
+			}
+			packs = append(packs, pack)
+		}
 		world := &worldCard{
 			PathToFolder: worldPath,
 			WorldName: string(worldName),
-			LastPlayed: info.ModTime().Format(time.DateTime),
-			Card: NewWorldCard(),
+			LastPlayed: info.ModTime(),
 			Structures: structures,
+			Packs: packs,
 		}
+		world.Card = NewWorldCard(world)
 		worlds = append(worlds, world)
 	}
 	return worlds
 }
 
-func filterWorlds(worlds []*worldCard, query string) []*worldCard {
-	return worlds
+func (worldList *worldsControl) UpdateWorlds() {
+	worldList.FilteredWorlds = []*worldCard{}
+	for _, world := range worldList.Worlds {
+		if strings.Contains(strings.ToLower(world.WorldName), strings.ToLower(worldList.SearchQuery)) {
+			worldList.FilteredWorlds = append(worldList.FilteredWorlds, world)
+		}
+		sort.Slice(worldList.FilteredWorlds, func(i int, j int) bool {
+			switch worldList.SortMethod {
+			case DateA:
+				return worldList.FilteredWorlds[i].LastPlayed.After(worldList.FilteredWorlds[j].LastPlayed)
+			case DateD:
+				return worldList.FilteredWorlds[i].LastPlayed.Before(worldList.FilteredWorlds[j].LastPlayed)
+			case Alphabetical:
+				return worldList.FilteredWorlds[i].WorldName < worldList.FilteredWorlds[j].WorldName
+			default:
+				return worldList.FilteredWorlds[i].LastPlayed.Before(worldList.FilteredWorlds[j].LastPlayed)
+			}
+		})
+	}
 }
 
 func resolvePath(path string) string {

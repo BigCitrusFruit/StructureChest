@@ -48,6 +48,15 @@ type manifestHeader struct {
 	} `json:"header"`
 }
 
+type WorldSession struct {
+	WorldPath string
+	StagedStructures map[StructureName]RawStructure
+	DeletedStructures map[StructureName]bool
+	StagedBPs []BehaviorPack
+	StagedRPs []ResourcePack
+	DeletedPacks map[PackID]bool
+}
+
 type Addon struct {
 	BP BehaviorPack
 	RP ResourcePack
@@ -62,6 +71,66 @@ func resolvePath(path string) string {
 		path = filepath.Join(home, path[1:])
 	}
 	return os.ExpandEnv(path)
+}
+
+func NewWorldSession(worldPath string) *WorldSession  {
+	return &WorldSession{
+		WorldPath: resolvePath(worldPath),
+		StagedStructures: make(map[StructureName]RawStructure),
+		DeletedStructures:  make(map[StructureName]bool),
+		DeletedPacks: make(map[PackID]bool),
+	}
+}
+
+func (session *WorldSession) AddStructure(name StructureName, data RawStructure) {
+	delete(session.DeletedStructures, name)
+	session.StagedStructures[name] = data
+}
+
+func (session *WorldSession) DiscardChanges() {
+	session.StagedStructures = make(map[StructureName]RawStructure)
+	session.DeletedStructures = make(map[StructureName]bool)
+	session.DeletedPacks = make(map[PackID]bool)
+	session.StagedBPs = nil
+	session.StagedRPs = nil
+}
+
+func (session *WorldSession) ListStructures() []StructureName {
+	diskStructures := ListWorldStructures(session.WorldPath)
+	var merged []StructureName
+	for _, structure := range diskStructures {
+		if !session.DeletedStructures[structure] {
+			merged = append(merged, structure)
+		}
+	}
+	for name := range session.StagedStructures {
+		merged = append(merged, name)
+	}
+	return merged
+}
+
+func (session *WorldSession) Commit() error {
+	dbPath := filepath.Join(session.WorldPath, "/db")
+	database, err := leveldb.OpenFile(dbPath, &dbopt.Options{ReadOnly: false})
+	if err != nil {
+		return fmt.Errorf("World database failed to open: %v", err)
+	}
+	defer database.Close()
+	batch := new(leveldb.Batch)
+	for name, data := range session.StagedStructures {
+		prefix := name.Prefix
+		if prefix != "" {
+			prefix = "mystructure"
+		}
+		key := "structuretemplate_" + prefix + ":" + name.Name
+		batch.Put([]byte(key), data)
+	}
+	err = database.Write(batch, nil)
+	if err != nil {
+		return fmt.Errorf("Failed to write changes to levelDB: %v", err)
+	}
+	session.DiscardChanges()
+	return nil
 }
 
 // Lists the structures inside a world's database.
@@ -118,6 +187,7 @@ func GetStructureFromWorld(path string, name StructureName) (RawStructure, error
 	if err != nil {
 		return RawStructure{}, err
 	}
+	defer database.Close()
 	key := []byte("structuretemplate_" + name.Prefix + ":" + name.Name)
 	value, err := database.Get(key, nil)
 	return RawStructure(value), nil
@@ -239,6 +309,8 @@ func GetRPFromWorld(worldPath string, ID PackID) (ResourcePack, error) {
 	return pack, nil
 }
 
+/*
+Holding the following until new changes are confirmed
 
 func AddRPToWorld(packPath string, worldPath string) error { // TODO
 	return nil
@@ -254,6 +326,17 @@ func RemovePackFromWorld(id PackID, worldPath string, isBP bool) error { // TODO
 	return nil
 }
 
+// Deletes a structure by the given name from a world.
+func DeleteStructureFromWorld(structure StructureName, worldPath string) error {
+	db, err := leveldb.OpenFile(filepath.Join(worldPath, "/db"), &dbopt.Options{ReadOnly: false})
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	key := "structuretemplate_" + structure.Prefix + ":" + structure.Name
+	return db.Delete([]byte(key), nil)
+}
+
 // Adds a structure to the world database. The key defaults to
 // `"structuretemplate_mystructure:" + name`
 // as if it were saved or imported by the player in-game
@@ -262,13 +345,13 @@ func (structure *RawStructure) AddToWorld(path string, name string) error {
 	if err != nil {
 		return err
 	}
+	defer db.Close()
 	key := "structuretemplate_mystructure:" + name
-	err = db.Put([]byte(key), *structure, nil)
-	return err
+	return db.Put([]byte(key), *structure, nil)
 }
 
-// "path" is the path to the PACK inside the world, not just the world. The path may be gotten from world.GetBPFromWorld(worldPath)
-func (structure *RawStructure) AddToWorldPack(path string, name string) error {
-	structurePath := filepath.Join(path, "/"+ name + ".mcstructure")
+func (structure *RawStructure) AddToWorldPack(packPath string, name string) error {
+	structurePath := filepath.Join(packPath, "/"+ name + ".mcstructure")
 	return os.WriteFile(structurePath, *structure, 0666)
 }
+*/
